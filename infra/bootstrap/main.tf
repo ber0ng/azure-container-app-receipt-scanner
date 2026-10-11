@@ -47,7 +47,7 @@ locals {
       for env in var.environments : "${env}-environment" => {
         env     = env
         name    = "github-environment-${env}"
-        subject = "repo:$P{var.github_repo}:environment:${env}"
+        subject = "repo:${var.github_repo}:environment:${env}"
       }
     },
     # terraform plan on PR runs against the first env
@@ -55,7 +55,7 @@ locals {
       "${local.build_env}-pull-request" = {
         env     = local.build_env
         name    = "github-pull-request"
-        subject = "repo:a${var.github_repo}:pull_request"
+        subject = "repo:${var.github_repo}:pull_request"
       }
     }
   )
