@@ -1,0 +1,69 @@
+name: receipt-scanner
+
+# local dev stack: app containers talk to emulators for every azure services
+# connection strings and keys come from .env (gitignored), see .env.example
+# in azure, same code uses managed identity instead
+
+x-azure-local: &azure-local
+  STORAGE_CONNECTION_STRING: ${STORAGE_CONNECTION_STRING:?set STORAGE_CONNECTION_STRING in .env}
+  SERVICEBUS_CONNECTION_STRING: ${SERVICEBUS_CONNECTION_STRING:?set SERVICEBUS_CONNECTION_STRING in .env}
+  COSMOS_ENDPOINT: "http://cosmos:8081"
+  COSMOS_KEY: ${COSMOS_KEY:?set COSMOS_KEY in .env}
+  COSMOS_EMULATOR: "true"
+
+services:
+  api:
+    build: ./app/api
+    ports: ["3000:3000"]
+    environment:
+      <<: *azure-local
+      LOCAL_INIT: "true" # create blob container + cosmos db/container on startup (Terraform does this in Azure)
+    depends_on: [azurite, cosmos, servicebus]
+
+  worker:
+    build: ./app/worker
+    environment:
+      <<: *azure-local
+      WORKER_MODE: loop # in Azure it runs as a Container Apps Job: drain the queue, then exit
+      EXTRACTOR: ${EXTRACTOR:-mock}
+      DOCINTEL_ENDPOINT: ${DOCINTEL_ENDPOINT:-}
+      DOCINTEL_KEY: ${DOCINTEL_KEY:-}
+    depends_on: [api]
+    restart: unless-stopped
+
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    command: azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+    ports: ["10000:10000"]
+
+  cosmos:
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+    ports:
+      - "8081:8081" # data plane
+      - "1234:1234" # data explorer: http://localhost:1234
+
+  servicebus:
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    volumes:
+      - ./servicebus/config.json:/ServiceBus_Emulator/ConfigFiles/Config.json
+    environment:
+      SQL_SERVER: sql
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env}
+      ACCEPT_EULA: "Y"
+      SQL_WAIT_INTERVAL: "15"
+    ports: ["5672:5672"]
+    depends_on:
+      sql:
+        condition: service_healthy
+
+  sql: # backing store required by the Service Bus emulator
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD}
+    healthcheck: # emulator must not start until SQL accepts logins
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
