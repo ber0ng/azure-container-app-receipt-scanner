@@ -11,7 +11,7 @@ variable "github_repo" {
 variable "project" {
   description = "Project name"
   type        = string
-  default     = "rctpscan"
+  default     = "rcptscan"
 
   validation {
     condition     = can(regex("^[a-z0-9]{3,10}$", var.project))
