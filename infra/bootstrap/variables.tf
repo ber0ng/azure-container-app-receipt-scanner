@@ -4,7 +4,7 @@ variable "subscription_id" {
 }
 
 variable "github_repo" {
-  description = "Github repo to deploy"
+  description = "Github repo as it appears in the OIDC sub claim, e.g. owner@<owner_id>/repo@<repo_id>"
   type        = string
 }
 
