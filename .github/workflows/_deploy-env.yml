@@ -1,0 +1,87 @@
+name: deploy-env
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      image_tag:
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    name: ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # picks this env's identity + approval rules
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_IN_AUTOMATION: "true"
+      ENV_NAME: ${{ inputs.environment }}
+    defaults:
+      run:
+        working-directory: infra/app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform init
+        run: terraform init -input=false -backend-config=envs/${ENV_NAME}.backend.hcl
+
+      - name: Terraform plan
+        run: |
+          terraform plan -input=false -no-color -lock-timeout=5m \
+            -var-file=envs/${ENV_NAME}.tfvars -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+          {
+            echo "### Terraform plan: ${ENV_NAME}"
+            echo '```hcl'
+            tail -c 60000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform apply
+        run: terraform apply -input=false -lock-timeout=5m tfplan
+
+      - name: Deploy images
+        run: |
+          RG=$(terraform output -raw resource_group)
+          API_APP=$(terraform output -raw api_app_name)
+          JOB=$(terraform output -raw worker_job_name)
+          REG="${{ vars.ACR_LOGIN_SERVER }}"
+          TAG="${{ inputs.image_tag }}"
+
+          az config set extension.use_dynamic_install=yes_without_prompt
+
+          az containerapp update -n "$API_APP" -g "$RG" \
+            --image "$REG/receipt-api:$TAG" -o none
+          az containerapp job update -n "$JOB" -g "$RG" \
+            --image "$REG/receipt-worker:$TAG" -o none
+
+          echo "API_URL=$(terraform output -raw api_url)" >> "$GITHUB_ENV"
+          echo "Deployed **$TAG** to **$ENV_NAME**: $(terraform output -raw api_url)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test
+        run: |
+          # Retries cover cold starts (scale-to-zero) and the new revision coming up.
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 10 --retry-all-errors \
+            "$API_URL/healthz"

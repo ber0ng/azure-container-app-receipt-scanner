@@ -1,0 +1,104 @@
+name: terraform plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/app/**"
+      - ".github/workflows/terraform-plan.yml"
+
+permissions:
+  id-token: write # OIDC to login to azure
+  contents: read
+  pull-requests: write # post the plan as a comment
+
+concurrency:
+  group: tf-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: false # never kill terraform mid-run
+
+env:
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID_DEV }}
+  ARM_TENANT_ID: ${{ vars.TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  plan-dev:
+    name: plan (dev)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Format check
+        run: terraform fmt -check -recursive ..
+
+      - name: Initialized Terraform
+        run: terraform init -input=false -backend-config=envs/dev.backend.hcl
+
+      - name: Validate Terraform
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        id: plan
+        continue-on-error: true
+        run: |
+          terraform plan -input=false -no-color -lock-timeout=5m \
+              -var-file=envs/dev.tfvars -out=tfplan > plan.log 2>&1 \
+              || { cat plan.log; exit 1; }
+          terraform show -no-color tfplan > plan.txt
+          cat plan.txt
+
+      - name: Comment plan on PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const dir = 'infra/app';
+            const file = fs.existsSync(`${dir}/plan.txt`) ? `${dir}/plan.txt` : `${dir}/plan.log`;
+            let plan = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'No plan output.';
+
+            const max = 60000;
+            if (plan.length > max) plan = '...(truncated, see the workflow log)\n' + plan.slice(-max);
+
+            const ok = process.env.PLAN_OUTCOME === 'success';
+            const summary = (plan.match(/Plan: .*|No changes\..*/) || ['See details'])[0];
+            const marker = '<!-- tf-plan-dev -->';
+            const body = [
+            marker,
+            `### Terraform plan (dev): ${ok ? '✅' : '❌'} ${summary}`,
+            '<details><summary>Show plan</summary>',
+            '',
+            '```hcl',
+            plan,
+            '```',
+            '</details>',
+            '',
+            `Commit ${context.sha.slice(0, 7)} · [workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+            ].join('\n');
+
+            // Update the existing plan comment instead of adding a new one on every push.
+            const { data: comments } = await github.rest.issues.listComments({
+            ...context.repo, issue_number: context.issue.number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+            await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else {
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
+            }
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1

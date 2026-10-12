@@ -1,0 +1,71 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "infra/app/**"
+      - ".github/workflows/deploy.yml"
+      - ".github/workflows/_deploy-env.yml"
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build & push images
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: tag
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: az acr login --name "${{ vars.ACR_NAME }}"
+
+      - name: Build and push to ACR
+        run: |
+          for svc in api worker; do
+              image="${{ vars.ACR_LOGIN_SERVER }}/receipt-${svc}:${{ steps.tag.outputs.tag }}"
+              docker build -t "$image" "app/${svc}"
+              docker push "$image"
+          done
+
+  dev:
+    needs: build
+    uses: ./.github/workflows/_deploy-env.yml
+    with:
+      environment: dev
+      image_tag: ${{ needs.build.outputs.image_tag }}
+
+  staging:
+    needs: [build, dev]
+    uses: ./.github/workflows/_deploy-env.yml
+    with:
+      environment: staging
+      image_tag: ${{ needs.build.outputs.image_tag }}
+
+  prod:
+    needs: [build, staging]
+    uses: ./.github/workflows/_deploy-env.yml
+    with:
+      environment: prod
+      image_tag: ${{ needs.build.outputs.image_tag }}
