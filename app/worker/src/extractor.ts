@@ -7,6 +7,9 @@ import { AzureKeyCredential } from "@azure/core-auth";
 import { config, must } from "./config";
 import { credential } from "./clients";
 
+// Retrying won't change the outcome, so the worker dead-letters these immediately.
+export class PermanentError extends Error { }
+
 export interface ReceiptResult {
     merchantName?: string;
     transactionDate?: string;
@@ -54,7 +57,7 @@ class AzureExtractor implements Extractor {
         const done = await getLongRunningPoller(this.client, initial).pollUntilDone();
         const output = done.body as AnalyzeOperationOutput;
         const doc = output.analyzeResult?.documents?.[0];
-        if (!doc) throw new Error("No receipt detected in the document");
+        if (!doc) throw new PermanentError("No receipt detected in the document");
 
         const f = doc.fields ?? {};
         return {
