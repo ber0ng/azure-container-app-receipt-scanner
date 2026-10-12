@@ -19,6 +19,7 @@ terraform {
 
 provider "azurerm" {
   features {}
-  subscription_id     = var.subscription_id
-  storage_use_azuread = true # shared keys are disabled on our storage account
+  subscription_id                 = var.subscription_id
+  storage_use_azuread             = true # shared keys are disabled on our storage account
+  resource_provider_registrations = "none"
 }
