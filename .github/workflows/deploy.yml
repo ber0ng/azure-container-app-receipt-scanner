@@ -9,7 +9,14 @@ on:
       - ".github/workflows/deploy.yml"
       - ".github/workflows/_deploy-env.yml"
 
+  # pushes to main only reach dev. staging/prod are promoted by running this manually
   workflow_dispatch:
+    inputs:
+      promote_to:
+        description: "Deploy up to this environment (goes through the ones before it)"
+        type: choice
+        options: [dev, staging, prod]
+        default: dev
 
 permissions:
   id-token: write
@@ -58,6 +65,7 @@ jobs:
 
   staging:
     needs: [build, dev]
+    if: github.event_name == 'workflow_dispatch' && inputs.promote_to != 'dev'
     uses: ./.github/workflows/_deploy-env.yml
     with:
       environment: staging
@@ -65,6 +73,7 @@ jobs:
 
   prod:
     needs: [build, staging]
+    if: github.event_name == 'workflow_dispatch' && inputs.promote_to == 'prod'
     uses: ./.github/workflows/_deploy-env.yml
     with:
       environment: prod
