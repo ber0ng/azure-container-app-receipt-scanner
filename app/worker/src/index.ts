@@ -2,7 +2,7 @@ import { PatchOperation } from "@azure/cosmos";
 import { ServiceBusReceivedMessage, ServiceBusReceiver } from "@azure/service-bus";
 import { config } from "./config";
 import { blobContainer, receipts, serviceBus } from "./clients";
-import { extractor } from "./extractor";
+import { extractor, PermanentError } from "./extractor";
 import { ReceiptMessage, ReceiptStatus } from "./types";
 
 async function updateReceipt(id: string, status: ReceiptStatus, extra: { result?: unknown; error?: string } = {}) {
@@ -37,12 +37,17 @@ async function handle(receiver: ServiceBusReceiver, msg: ServiceBusReceivedMessa
         console.log(`Completed ${receiptId}`);
     } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
-        console.error(`Failed ${receiptId}: ${error}`);
-        if ((msg.deliveryCount ?? 1) >= config.maxAttempts) {
+        const permanent = err instanceof PermanentError;
+        console.error(`Failed ${receiptId} (${permanent ? "permanent" : "transient"}): ${error}`);
+
+        if (permanent || (msg.deliveryCount ?? 1) >= config.maxAttempts) {
             await updateReceipt(receiptId, "failed", { error }).catch(() => undefined);
-            await receiver.deadLetterMessage(msg, { deadLetterReason: "ProcessingFailed", deadLetterErrorDescription: error });
+            await receiver.deadLetterMessage(msg, {
+                deadLetterReason: permanent ? "NotAReceipt" : "ProcessingFailed",
+                deadLetterErrorDescription: error,
+            });
         } else {
-            await receiver.abandonMessage(msg); // back on the queue for another try
+            await receiver.abandonMessage(msg); // transient: let it retry
         }
     }
 }
