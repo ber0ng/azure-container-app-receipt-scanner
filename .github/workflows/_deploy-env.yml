@@ -9,6 +9,10 @@ on:
       image_tag:
         type: string
         required: true
+      services:
+        description: "all, api or worker"
+        type: string
+        default: all
 
 permissions:
   id-token: write
@@ -19,6 +23,10 @@ jobs:
     name: ${{ inputs.environment }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }} # picks this env's identity + approval rules
+    # one deploy per env at a time, whether it came from deploy.yml or promote.yml
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
     env:
       ARM_USE_OIDC: "true"
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
@@ -26,6 +34,8 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       TF_IN_AUTOMATION: "true"
       ENV_NAME: ${{ inputs.environment }}
+      SERVICES: ${{ inputs.services }}
+      TAG: ${{ inputs.image_tag }}
     defaults:
       run:
         working-directory: infra/app
@@ -42,6 +52,19 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # fail before touching anything if the tag was never built
+      - name: Check images exist
+        run: |
+          case "$SERVICES" in
+            all) svcs="api worker" ;;
+            api|worker) svcs="$SERVICES" ;;
+            *) echo "::error::services must be all, api or worker (got '$SERVICES')"; exit 1 ;;
+          esac
+          for svc in $svcs; do
+            az acr repository show --name "${{ vars.ACR_NAME }}" --image "receipt-${svc}:${TAG}" -o none \
+              || { echo "::error::receipt-${svc}:${TAG} not found in ${{ vars.ACR_NAME }}"; exit 1; }
+          done
 
       - name: Terraform init
         run: terraform init -input=false -backend-config=envs/${ENV_NAME}.backend.hcl
@@ -67,17 +90,20 @@ jobs:
           API_APP=$(terraform output -raw api_app_name)
           JOB=$(terraform output -raw worker_job_name)
           REG="${{ vars.ACR_LOGIN_SERVER }}"
-          TAG="${{ inputs.image_tag }}"
 
           az config set extension.use_dynamic_install=yes_without_prompt
 
-          az containerapp update -n "$API_APP" -g "$RG" \
-            --image "$REG/receipt-api:$TAG" -o none
-          az containerapp job update -n "$JOB" -g "$RG" \
-            --image "$REG/receipt-worker:$TAG" -o none
+          if [[ "$SERVICES" == all || "$SERVICES" == api ]]; then
+            az containerapp update -n "$API_APP" -g "$RG" \
+              --image "$REG/receipt-api:$TAG" -o none
+          fi
+          if [[ "$SERVICES" == all || "$SERVICES" == worker ]]; then
+            az containerapp job update -n "$JOB" -g "$RG" \
+              --image "$REG/receipt-worker:$TAG" -o none
+          fi
 
           echo "API_URL=$(terraform output -raw api_url)" >> "$GITHUB_ENV"
-          echo "Deployed **$TAG** to **$ENV_NAME**: $(terraform output -raw api_url)" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployed **$TAG** ($SERVICES) to **$ENV_NAME**: $(terraform output -raw api_url)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Smoke test
         run: |
