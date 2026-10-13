@@ -1,0 +1,19 @@
+# Gitleaks config: default rules plus an allowlist for known false positives.
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public, well-known local emulator values, not real secrets"
+regexes = [
+  # Azurite (local Blob emulator) account key: published by Microsoft, only works against a local emulator.
+  # No longer in the working tree (moved to .env), but present in early commits.
+  '''Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OKGZp4fBsnD\+UMr\+/TKpFDBl5HxYoIZpY4wGAEJcl8YHAMVSyxQm\+4R/r\+uHQ==''',
+
+  # Cosmos DB emulator key: published by Microsoft, same story.
+  '''C2y6yDjf5/R\+ob0N8A7Cgv30VRDJIWEHLM\+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XyCxww==''',
+
+  # Placeholder SQL password used in .env.example for the Service Bus emulator's backing SQL Server.
+  '''Ch4nge-Me-Locally!''',
+]

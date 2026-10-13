@@ -1,0 +1,51 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directories: ["/app/api", "/app/worker"]
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Asia/Manila
+    groups:
+      npm-minor-patch: # one pr for small bumps
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "deps(npm)"
+
+  - package-ecosystem: docker
+    directories: ["/app/api", "/app/worker"]
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Manila
+    ignore:
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "deps(docker)"
+
+  - package-ecosystem: terraform
+    directories: ["/infra/app", "/infra/bootstrap"]
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Manila
+    commit-message:
+      prefix: "deps(terraform)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Manila
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps(actions)"

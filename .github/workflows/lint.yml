@@ -1,0 +1,46 @@
+name: Lint
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: terraform (fmt + tflint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Format check
+        run: terraform fmt -check -recursive infra
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      - name: tflint
+        working-directory: infra
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init --config "$(pwd)/.tflint.hcl"
+          tflint --recursive --config "$(pwd)/.tflint.hcl" --format compact
+
+  dockerfiles:
+    name: dockerfile (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, worker]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/${{ matrix.service }}/Dockerfile
+          failure-threshold: warning

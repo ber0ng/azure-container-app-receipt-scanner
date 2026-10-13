@@ -1,0 +1,90 @@
+name: promote
+
+# Deploys an image tag that's already in ACR to one environment. No rebuild.
+# Also used for rollbacks: promote an older tag.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy to"
+        type: choice
+        options: [staging, prod, dev]
+        required: true
+      image_tag:
+        description: "Image tag to deploy (12-char commit SHA). Leave blank to use whatever dev is running"
+        type: string
+        required: false
+      services:
+        description: "What to deploy"
+        type: choice
+        options: [all, api, worker]
+        default: all
+
+permissions:
+  id-token: write
+  contents: read
+
+run-name: promote ${{ inputs.image_tag || 'dev tag' }} (${{ inputs.services }}) to ${{ inputs.environment }}
+
+jobs:
+  # only runs when image_tag is blank: reads the tag dev is currently running
+  resolve-tag:
+    if: inputs.image_tag == ''
+    runs-on: ubuntu-latest
+    environment: dev # dev identity can read dev's apps; the target env's can't
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - id: tag
+        env:
+          RG: ${{ vars.RESOURCE_GROUP }}
+          TARGET: ${{ inputs.environment }}
+          SERVICES: ${{ inputs.services }}
+        run: |
+          if [[ "$TARGET" == dev ]]; then
+            echo "::error::image_tag is required when deploying to dev"; exit 1
+          fi
+
+          az config set extension.use_dynamic_install=yes_without_prompt
+
+          api_image=$(az containerapp list -g "$RG" \
+            --query "[?ends_with(name, '-api')].properties.template.containers[0].image | [0]" -o tsv)
+          worker_image=$(az containerapp job list -g "$RG" \
+            --query "[?ends_with(name, '-worker')].properties.template.containers[0].image | [0]" -o tsv)
+          api_tag="${api_image##*:}"
+          worker_tag="${worker_image##*:}"
+          echo "dev api: $api_image"
+          echo "dev worker: $worker_image"
+
+          case "$SERVICES" in
+            api) tag="$api_tag" ;;
+            worker) tag="$worker_tag" ;;
+            all)
+              if [[ "$api_tag" != "$worker_tag" ]]; then
+                echo "::error::dev api ($api_tag) and worker ($worker_tag) run different tags; set image_tag explicitly"; exit 1
+              fi
+              tag="$api_tag" ;;
+          esac
+
+          if [[ -z "$tag" || "$tag" == bootstrap ]]; then
+            echo "::error::dev has no deployed tag to promote (got '${tag}')"; exit 1
+          fi
+
+          echo "Promoting dev's tag **$tag**" >> "$GITHUB_STEP_SUMMARY"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: resolve-tag
+    # run when resolve-tag succeeded or was skipped (tag given), not when it failed
+    if: ${{ !failure() && !cancelled() }}
+    uses: ./.github/workflows/_deploy-env.yml
+    with:
+      environment: ${{ inputs.environment }}
+      image_tag: ${{ inputs.image_tag || needs.resolve-tag.outputs.tag }}
+      services: ${{ inputs.services }}
