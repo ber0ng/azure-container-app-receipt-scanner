@@ -12,16 +12,16 @@ jobs:
     name: terraform (fmt + tflint)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: "1.9.8"
 
       - name: Format check
         run: terraform fmt -check -recursive infra
 
-      - uses: terraform-linters/setup-tflint@v4
+      - uses: terraform-linters/setup-tflint@v6
 
       - name: tflint
         working-directory: infra
@@ -38,9 +38,9 @@ jobs:
       matrix:
         service: [api, worker]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: hadolint/hadolint-action@v3.1.0
+      - uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: app/${{ matrix.service }}/Dockerfile
           failure-threshold: warning
