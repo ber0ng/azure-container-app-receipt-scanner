@@ -1,5 +1,6 @@
 subscription_id       = "5881f109-0629-42dc-9fd1-7fe6d67dc358"
 environment           = "staging"
+location              = "eastus2" # Container Apps environment creation kept failing in eastus (capacity)
 acr_name              = "acrrcptscanlsnhy"
 cosmos_free_tier      = false
 docintel_sku          = "S0"
