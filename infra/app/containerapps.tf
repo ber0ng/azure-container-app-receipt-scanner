@@ -8,6 +8,12 @@ resource "azurerm_container_app_environment" "aca_env" {
   location                   = var.location
   log_analytics_workspace_id = azurerm_log_analytics_workspace.log_analytics_workspace.id
   tags                       = local.tags
+
+  # azure adds this built-in profile automatically; declared so plans don't drift
+  workload_profile {
+    name                  = "Consumption"
+    workload_profile_type = "Consumption"
+  }
 }
 
 # API: container app with public ingress
@@ -16,6 +22,7 @@ resource "azurerm_container_app" "api_aca" {
   container_app_environment_id = azurerm_container_app_environment.aca_env.id
   resource_group_name          = data.azurerm_resource_group.env_rg.name
   revision_mode                = "Single"
+  workload_profile_name        = "Consumption"
   tags                         = local.tags
 
   identity {
@@ -108,6 +115,7 @@ resource "azurerm_container_app_job" "worker_job_aca" {
   container_app_environment_id = azurerm_container_app_environment.aca_env.id
   replica_timeout_in_seconds   = 600
   replica_retry_limit          = 1
+  workload_profile_name        = "Consumption"
   tags                         = local.tags
 
   identity {
