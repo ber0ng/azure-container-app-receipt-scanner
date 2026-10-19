@@ -42,12 +42,36 @@ jobs:
       - name: Login to ACR
         run: az acr login --name "${{ vars.ACR_NAME }}"
 
-      - name: Build and push to ACR
+      - name: Build images
         run: |
           for svc in api worker; do
-              image="${{ vars.ACR_LOGIN_SERVER }}/receipt-${svc}:${{ steps.tag.outputs.tag }}"
-              docker build -t "$image" "app/${svc}"
-              docker push "$image"
+              docker build -t "${{ vars.ACR_LOGIN_SERVER }}/receipt-${svc}:${{ steps.tag.outputs.tag }}" "app/${svc}"
+          done
+
+      # don't push anything with fixable critical/high vulns
+      - name: Trivy scan (api)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ vars.ACR_LOGIN_SERVER }}/receipt-api:${{ steps.tag.outputs.tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Trivy scan (worker)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ vars.ACR_LOGIN_SERVER }}/receipt-worker:${{ steps.tag.outputs.tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+      - name: Push to ACR
+        run: |
+          for svc in api worker; do
+              docker push "${{ vars.ACR_LOGIN_SERVER }}/receipt-${svc}:${{ steps.tag.outputs.tag }}"
           done
 
   dev:
