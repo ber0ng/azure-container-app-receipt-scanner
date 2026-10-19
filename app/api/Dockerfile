@@ -8,6 +8,8 @@ RUN npm run build && npm prune --omit=dev
 
 FROM node:22-alpine
 ENV NODE_ENV=production
+# runtime only needs node; npm's bundled deps carry CVEs
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 WORKDIR /app
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
