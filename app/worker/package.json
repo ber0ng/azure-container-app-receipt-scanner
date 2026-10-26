@@ -9,17 +9,17 @@
   },
   "dependencies": {
     "@azure-rest/ai-document-intelligence": "^1.1.0",
-    "@azure/core-auth": "^1.10.0",
-    "@azure/cosmos": "^4.5.0",
-    "@azure/identity": "^4.10.0",
-    "@azure/service-bus": "^7.9.5",
-    "@azure/storage-blob": "^12.27.0"
+    "@azure/core-auth": "^1.11.0",
+    "@azure/cosmos": "^4.10.1",
+    "@azure/identity": "^4.14.0",
+    "@azure/service-bus": "^7.10.0",
+    "@azure/storage-blob": "^12.34.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.15.0",
-    "eslint": "^10.12.0",
+    "eslint": "^10.13.0",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.71.2"
+    "typescript-eslint": "^8.72.0"
   }
 }
