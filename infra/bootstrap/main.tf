@@ -177,7 +177,31 @@ resource "azurerm_role_assignment" "env_stae" {
   principal_id         = azuread_service_principal.github_sp[each.key].object_id
 }
 
-# Read the shared registry 
+# Destroying a cognitive account soft-deletes it; terraform then purges it so the
+# name can be reused. The deletedAccounts path lives at subscription level, outside the env RG.
+resource "azurerm_role_definition" "cognitive_purge" {
+  name        = "${var.project}-cognitive-purge"
+  scope       = "/subscriptions/${var.subscription_id}"
+  description = "Purge soft-deleted cognitive services accounts"
+
+  permissions {
+    actions = [
+      "Microsoft.CognitiveServices/locations/resourceGroups/deletedAccounts/read",
+      "Microsoft.CognitiveServices/locations/resourceGroups/deletedAccounts/delete",
+    ]
+  }
+
+  assignable_scopes = ["/subscriptions/${var.subscription_id}"]
+}
+
+resource "azurerm_role_assignment" "env_cognitive_purge" {
+  for_each           = local.envs
+  scope              = "/subscriptions/${var.subscription_id}"
+  role_definition_id = azurerm_role_definition.cognitive_purge.role_definition_resource_id
+  principal_id       = azuread_service_principal.github_sp[each.key].object_id
+}
+
+# Read the shared registry
 resource "azurerm_role_assignment" "env_shared_reader" {
   for_each             = local.envs
   scope                = azurerm_resource_group.shared_rg.id
