@@ -1,0 +1,76 @@
+name: terraform destroy
+
+# Manual only. Tears down infra/app for one env.
+# Bootstrap (state storage, shared ACR, identities) is left alone.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to destroy"
+        type: choice
+        options: [dev, staging, prod]
+        required: true
+      confirm:
+        description: "Type the environment name again to confirm"
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    name: destroy (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }} # same identity + approval rules as deploy
+    # share the deploy lock so a deploy and a destroy never race on the same env
+    concurrency:
+      group: deploy-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      TF_IN_AUTOMATION: "true"
+      ENV_NAME: ${{ inputs.environment }}
+      CONFIRM: ${{ inputs.confirm }}
+    defaults:
+      run:
+        working-directory: infra/app
+    steps:
+      - name: Check confirmation
+        working-directory: .
+        run: |
+          if [[ "$CONFIRM" != "$ENV_NAME" ]]; then
+            echo "::error::confirm must be '$ENV_NAME' (got '$CONFIRM')"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: terraform init -input=false -backend-config=envs/${ENV_NAME}.backend.hcl
+
+      - name: Terraform plan (destroy)
+        run: |
+          terraform plan -destroy -input=false -no-color -lock-timeout=5m \
+            -var-file=envs/${ENV_NAME}.tfvars -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+          {
+            echo "### Terraform destroy plan: ${ENV_NAME}"
+            echo '```hcl'
+            tail -c 60000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform destroy
+        run: |
+          terraform apply -input=false -lock-timeout=5m tfplan
+          echo "Destroyed **$ENV_NAME** app infra." >> "$GITHUB_STEP_SUMMARY"
